@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PropertyBot</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#127968;</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">PB</span>
+    <div>
+      <h1>PropertyBot</h1>
+      <p class="brand-sub">PropertyGuru SG &middot; local dashboard</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-scrape" class="btn btn-primary">Start scrape</button>
+    <button id="btn-evaluate" class="btn btn-accent">Run evaluation</button>
+    <button id="btn-cancel" class="btn btn-ghost" hidden>Cancel job</button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab is-active" data-tab="dashboard" role="tab">Dashboard</button>
+  <button class="tab" data-tab="properties" role="tab">Properties</button>
+  <button class="tab" data-tab="runs" role="tab">Runs</button>
+</nav>
+
+<main>
+  <section id="tab-dashboard" class="tab-panel is-active">
+    <div id="stats" class="stat-grid"></div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Daily scrapes</h2>
+        <div class="panel-tools">
+          <label class="inline">Range
+            <select id="days-range">
+              <option value="7">7 days</option>
+              <option value="30" selected>30 days</option>
+              <option value="90">90 days</option>
+            </select>
+          </label>
+          <button id="btn-chart-mode" class="btn btn-small" data-mode="scrapes">Scrapes</button>
+        </div>
+      </div>
+      <div id="chart" class="chart"></div>
+      <p class="chart-legend">
+        <span><i class="key key-scrape"></i>scrapes</span>
+        <span><i class="key key-eval"></i>evaluations</span>
+        <span><i class="key key-fail"></i>failed</span>
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Property types</h2>
+      <div id="types" class="type-bars"></div>
+    </div>
+  </section>
+
+  <section id="tab-properties" class="tab-panel">
+    <div class="filters">
+      <input id="f-q" type="search" placeholder="Search title, address, district, id&hellip;">
+      <select id="f-district"><option value="">All districts</option></select>
+      <select id="f-type"><option value="">All types</option></select>
+      <select id="f-outcome">
+        <option value="">Any score</option>
+        <option value="GREAT">GREAT</option>
+        <option value="GOOD">GOOD</option>
+        <option value="OK">OK</option>
+        <option value="FAIL">FAIL</option>
+      </select>
+      <input id="f-min" type="number" placeholder="Min $" min="0">
+      <input id="f-max" type="number" placeholder="Max $" min="0">
+      <select id="f-sort">
+        <option value="newest">Newest</option>
+        <option value="score_desc">Top score</option>
+        <option value="price_asc">Price: low to high</option>
+        <option value="price_desc">Price: high to low</option>
+        <option value="size_desc">Largest</option>
+      </select>
+      <button id="btn-reset" class="btn btn-ghost btn-small">Reset</button>
+    </div>
+    <div id="props-meta" class="meta-row"></div>
+    <div id="props" class="card-grid"></div>
+    <div class="pager">
+      <button id="btn-prev" class="btn btn-small">&larr; Previous</button>
+      <span id="pager-label" class="meta"></span>
+      <button id="btn-next" class="btn btn-small">Next &rarr;</button>
+    </div>
+  </section>
+
+  <section id="tab-runs" class="tab-panel">
+    <div id="days" class="day-grid"></div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Run history</h2>
+        <button id="btn-refresh-runs" class="btn btn-small btn-ghost">Refresh</button>
+      </div>
+      <div id="runs" class="run-list"></div>
+    </div>
+  </section>
+</main>
+
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-backdrop" data-close></div>
+  <div class="drawer-body" role="dialog" aria-modal="true">
+    <button class="drawer-close" data-close aria-label="Close">&times;</button>
+    <div id="drawer-content"></div>
+  </div>
+</div>
+
+<div id="jobpanel" class="jobpanel" hidden>
+  <div class="jobpanel-head">
+    <span id="job-status" class="dot"></span>
+    <strong id="job-title">Job running</strong>
+    <code id="job-command"></code>
+    <span class="grow"></span>
+    <button id="btn-minimize" class="btn btn-tiny btn-ghost">Hide log</button>
+  </div>
+  <pre id="job-log" class="joblog"></pre>
+</div>
+
+<div id="scrape-modal" class="drawer" hidden>
+  <div class="drawer-backdrop" data-cancel-scrape></div>
+  <form class="drawer-body drawer-form" id="scrape-form">
+    <button type="button" class="drawer-close" data-cancel-scrape>&times;</button>
+    <h2>Start a scrape</h2>
+    <label>Search URL
+      <input id="s-url" type="url" spellcheck="false">
+    </label>
+    <div class="form-row">
+      <label>Max results
+        <input id="s-results" type="number" value="20" min="1">
+      </label>
+      <label>Max pages
+        <input id="s-pages" type="number" value="10" min="1">
+      </label>
+      <label>Delay (s)
+        <input id="s-delay" type="number" value="3" min="0" step="0.5">
+      </label>
+    </div>
+    <label class="check">
+      <input id="s-headless" type="checkbox">
+      Headless <small>&mdash; Cloudflare detects headless Chromium and the scrape will likely fail.</small>
+    </label>
+    <p class="hint">A visible Chromium window opens on the desktop while scraping.</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" data-cancel-scrape>Cancel</button>
+      <button type="submit" class="btn btn-primary">Start scrape</button>
+    </div>
+  </form>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
