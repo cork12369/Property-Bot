@@ -39,8 +39,18 @@ python main.py stats
 | `--max-results` | 20 | Maximum listings to save |
 | `--max-pages` | 10 | Maximum search pages to visit (20 listings per page) |
 | `--delay` | 3.0 | Base delay between page requests (randomized up to 1.5x) |
-| `--headless` | off | Hide the browser window (currently detected by Cloudflare — likely to fail) |
+| `--headless` | off | Not supported — exits immediately (Cloudflare blocks headless Chromium). See "Running without a display" |
 | `--dry-run` | off | Print parsed listings without writing to the database |
+
+### Running without a display
+
+Cloudflare blocks headless Chromium, so the scraper needs a real browser window. On a
+headless Linux server, run it under a virtual display:
+
+```bash
+sudo apt install xvfb
+xvfb-run -a python main.py scrape
+```
 
 ## Mall directory (separate script)
 
@@ -78,15 +88,16 @@ python main.py gui --port 9000
 
 A local FastAPI dashboard that replaces clicking through the CLI:
 
-- **Dashboard** — total listings, properties scraped today, listings awaiting
-  evaluation, price statistics, a 30-day scrapes-per-day chart, and a
+- **Dashboard** — a ticker of key numbers, a top-picks leaderboard by score, an
+  outcome-spread bar (GREAT/GOOD/OK/FAIL/unscored), a daily activity chart, and a
   property-type breakdown.
-- **Properties** — one card per listing (photo, price, PSF, beds/baths/size, MRT,
-  outcome badge, 8-segment `c1`–`c8` score bar) with search, district/type/score
-  filters, and a detail drawer showing the gallery, price history, and the full
-  evidence behind every evaluation criterion.
-- **Runs** — daily activity cards and the full run history, with the captured log
-  and a link to the generated markdown report.
+- **Properties** — market-style cards (score, outcome pill, per-criterion
+  `c1`–`c4` bars, yellow price tag with change since first seen) with a global
+  search bar (`/`), outcome chips, and district/type/price filters. The detail
+  view adds a gallery, a price-history chart, and the full evidence behind every
+  evaluation criterion.
+- **Runs** — a 30-day activity heat strip and the full run history, with the
+  captured log and a link to the generated markdown report.
 - **Controls** — *Start scrape* and *Run evaluation* buttons run
   `python main.py scrape` and `python main.py agent run` as background subprocesses;
   the log streams to the browser over SSE and can be cancelled mid-run.
@@ -98,6 +109,15 @@ desktop. Evaluation needs `OPENROUTER_API_KEY` in `.env`.
 
 The GUI records every job in a `scrape_runs` table, which is what the daily charts
 and run history read from. Host and port default to `GUI_HOST` / `GUI_PORT` in `.env`.
+
+## Evaluation agent notes
+
+- Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` in `.env`. The default,
+  `meta/muse-spark-1.3`, works on a stock OpenRouter account.
+- The `meta/muse-spark-1.3-contributor` variant requires allowing paid-model training
+  at <https://openrouter.ai/settings/privacy>; otherwise OpenRouter rejects it.
+- Price-trend scoring compares *asking* prices, not transactions, and is only
+  meaningful once repeated scrapes have recorded real price movements.
 
 ## Data schema
 

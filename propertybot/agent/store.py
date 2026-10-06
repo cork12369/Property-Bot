@@ -38,6 +38,15 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def mark_stale_running_failed(conn: sqlite3.Connection) -> int:
+    """Runs left 'running' by a dead process can never finish."""
+    cursor = conn.execute(
+        "UPDATE agent_runs SET status = 'failed' WHERE status = 'running'"
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
 def create_run(conn: sqlite3.Connection, model: str, started_at: str) -> int:
     cursor = conn.execute(
         "INSERT INTO agent_runs (started_at, model, status) VALUES (?, ?, 'running')",
@@ -75,7 +84,10 @@ def save_score(
         (
             listing_id,
             run_id,
-            *(criteria[f"c{i}"]["score"] for i in range(1, 9)),
+            *(
+                criteria[key]["score"] if key in criteria else None
+                for key in (f"c{i}" for i in range(1, 9))
+            ),
             result["total"],
             result["outcome"],
             result["summary"],

@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from propertybot.agent import openrouter_client as llm_module
 from propertybot.agent.config import AgentConfig, ensure_utf8_stdout
 from propertybot.agent.pipeline import run_pipeline
+from propertybot.agent.prompts import CRITERION_KEYS
 
 ensure_utf8_stdout()
 
@@ -22,7 +23,7 @@ CALL_COUNT = {"n": 0}
 
 def fake_chat_json(user_prompt, *, api_key, model, **kwargs):
     CALL_COUNT["n"] += 1
-    base = [4, 3, 3, 2, 3, 3, 4, 2]
+    base = [4, 3, 3, 2]
     shift = CALL_COUNT["n"] % 3
     scores = [min(4, max(1, s + (1 if (i + shift) % 3 == 0 else 0))) for i, s in enumerate(base)]
     return {
@@ -37,7 +38,7 @@ config = AgentConfig.from_env()
 config.db_path = test_db
 config.reports_dir = reports_dir
 config.openrouter_api_key = "test-key-not-real"
-config.openrouter_model = "meta/muse-spark-1.3-contributor"
+config.openrouter_model = "meta/muse-spark-1.3"
 
 print(f"[test] temp DB: {test_db}")
 print(f"[test] reports: {reports_dir}")
@@ -52,7 +53,7 @@ scores = conn.execute("SELECT listing_id, run_id, c1, c2, c3, c4, c5, c6, c7, c8
 print(f"[test] agent_runs row: {dict(runs[0])}")
 print(f"[test] property_scores rows: {len(scores)}")
 for s in scores:
-    print(f"  listing {s['listing_id']}: total={s['total']} outcome={s['outcome']} c={[s[f'c{i}'] for i in range(1,9)]}")
+    print(f"  listing {s['listing_id']}: total={s['total']} outcome={s['outcome']} c={[s[k] for k in CRITERION_KEYS]}")
 report_files = list(reports_dir.glob("*.md"))
 print(f"[test] report files: {[str(p) for p in report_files]}")
 if report_files:
@@ -64,6 +65,7 @@ assert result["scored"] == 5, f"expected 5 scored, got {result['scored']}"
 assert len(scores) == 5
 assert len(report_files) == 1
 for s in scores:
-    assert abs(s["total"] - round(sum(s[f"c{i}"] for i in range(1, 9)) / 8, 3)) < 1e-9, "total mismatch"
+    expected = round(sum(s[k] for k in CRITERION_KEYS) / len(CRITERION_KEYS), 3)
+    assert abs(s["total"] - expected) < 1e-9, "total mismatch"
 print("\n[test] ALL ASSERTIONS PASSED")
 print(f"[test] temp dir kept for inspection: {tmpdir}")

@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 from .. import db as db_module
 from .. import scraper as scraper_module
 from ..agent import config as agent_config_module
+from ..agent import store as agent_store_module
 from ..agent.prompts import CRITERIA
 from ..models import utc_now_iso
 from . import store as store_module
@@ -42,7 +43,10 @@ CARD_FIELDS = """
     l.build_year, l.mrt, l.recency, l.description, l.image_url, l.image_count,
     l.agent_name, l.agent_company, l.first_seen_at, l.last_seen_at,
     s.total AS score, s.outcome, s.summary, s.scored_at,
-    s.c1, s.c2, s.c3, s.c4, s.c5, s.c6, s.c7, s.c8
+    s.c1, s.c2, s.c3, s.c4, s.c5, s.c6, s.c7, s.c8,
+    (SELECT ph.price_value FROM price_history ph
+      WHERE ph.listing_id = l.listing_id
+      ORDER BY ph.seen_at ASC LIMIT 1) AS first_price
 """
 
 LATEST_SCORE_JOIN = """
@@ -58,6 +62,7 @@ LATEST_SCORE_JOIN = """
 def _conn():
     conn = db_module.connect()
     store_module.ensure_schema(conn)
+    agent_store_module.ensure_schema(conn)
     return conn
 
 
@@ -87,6 +92,7 @@ async def lifespan(_: FastAPI):
     conn = _conn()
     try:
         store_module.mark_stale_running_failed(conn)
+        agent_store_module.mark_stale_running_failed(conn)
     finally:
         conn.close()
     yield
@@ -153,7 +159,9 @@ def api_properties(
     if property_type:
         where.append("l.property_type = ?")
         params.append(property_type)
-    if outcome:
+    if outcome == "unscored":
+        where.append("s.outcome IS NULL")
+    elif outcome:
         where.append("s.outcome = ?")
         params.append(outcome)
     if min_price is not None:
@@ -176,7 +184,15 @@ def api_properties(
             [*params, limit, offset],
         ).fetchall()
 
+        outcome_counts = {
+            row[0]: row[1]
+            for row in conn.execute(
+                f"SELECT COALESCE(s.outcome, 'unscored') AS bucket, COUNT(*) "
+                f"FROM listings l {LATEST_SCORE_JOIN} GROUP BY bucket"
+            ).fetchall()
+        }
         facets = {
+            "outcomes": outcome_counts,
             "districts": [
                 row[0]
                 for row in conn.execute(

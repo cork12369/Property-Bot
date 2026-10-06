@@ -8,6 +8,7 @@ from datetime import date, timedelta, timezone
 
 import pytest
 
+from propertybot.agent import store as agent_store
 from propertybot.web import jobs as jobs_module
 from propertybot.web import store as web_store
 from propertybot.web.app import LATEST_SCORE_JOIN, CARD_FIELDS, parse_criteria
@@ -24,6 +25,13 @@ CREATE TABLE listings (
     agent_company TEXT, agent_profile_url TEXT, search_url TEXT, search_page INTEGER,
     first_seen_at TEXT, last_seen_at TEXT
 );
+
+CREATE TABLE price_history (
+    listing_id INTEGER NOT NULL REFERENCES listings(listing_id),
+    price_value INTEGER,
+    seen_at TEXT NOT NULL,
+    PRIMARY KEY (listing_id, seen_at)
+);
 """
 
 
@@ -33,9 +41,7 @@ def conn():
     connection.row_factory = sqlite3.Row
     connection.executescript(LISTINGS_DDL)
     web_store.ensure_schema(connection)
-    from propertybot.agent import store as agent_store
-
-    connection.executescript(agent_store.AGENT_SCHEMA)
+    agent_store.ensure_schema(connection)
     yield connection
     connection.close()
 
@@ -177,7 +183,10 @@ def test_ensure_schema_migrates_table_without_local_day(conn):
     web_store.ensure_schema(legacy)  # must not raise
 
     row = web_store.get_run(legacy, 1)
-    assert row["local_day"] == "2026-09-27"
+    from datetime import datetime
+
+    expected = datetime.fromisoformat("2026-09-27T16:20:12+00:00").astimezone().date().isoformat()
+    assert row["local_day"] == expected
     assert row["status"] == "done"
     # the index on the new column must exist afterwards
     indexes = {r["name"] for r in legacy.execute("PRAGMA index_list(scrape_runs)")}
@@ -274,6 +283,58 @@ def test_card_query_leaves_unscored_listings_null(conn):
     assert row["score"] is None and row["outcome"] is None
 
 
+def _endpoint_conn(conn, monkeypatch):
+    """Route the API endpoints at the in-memory fixture database."""
+    from propertybot.web import app as web_app
+
+    class _KeepOpen:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def close(self):
+            pass  # endpoints must not close the shared fixture connection
+
+    wrapped = _KeepOpen(conn)
+    monkeypatch.setattr(web_app, "_conn", lambda: wrapped)
+    return web_app
+
+
+def test_card_query_includes_first_price(conn):
+    _add_listing(conn, 7, price=1_350_000)
+    conn.execute(
+        "INSERT INTO price_history (listing_id, price_value, seen_at) VALUES (7, 1300000, '2026-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO price_history (listing_id, price_value, seen_at) VALUES (7, 1350000, '2026-02-01')"
+    )
+    conn.commit()
+    row = conn.execute(
+        f"SELECT {CARD_FIELDS} FROM listings l {LATEST_SCORE_JOIN} WHERE l.listing_id = 7"
+    ).fetchone()
+    assert row["first_price"] == 1_300_000
+
+
+def test_properties_endpoint_outcomes_facet_and_unscored_filter(conn, monkeypatch):
+    _add_listing(conn, 1)
+    _add_listing(conn, 2)
+    _add_score(conn, 1, 1, 3.75, "GREAT", "2026-01-02T00:00:00+00:00")
+    web_app = _endpoint_conn(conn, monkeypatch)
+
+    data = web_app.api_properties(limit=24, offset=0)
+    assert data["facets"]["outcomes"] == {"GREAT": 1, "unscored": 1}
+
+    unscored = web_app.api_properties(outcome="unscored", limit=24, offset=0)
+    assert unscored["total"] == 1
+    assert unscored["properties"][0]["listing_id"] == 2
+
+    great = web_app.api_properties(outcome="GREAT", limit=24, offset=0)
+    assert great["total"] == 1
+    assert great["properties"][0]["listing_id"] == 1
+
+
 # ---------------- jobs ----------------
 
 
@@ -336,13 +397,55 @@ def test_child_env_sets_utf8():
 # ---------------- misc ----------------
 
 
-def test_parse_criteria_returns_eight_rubric_rows():
+def test_parse_criteria_matches_rubric_size():
+    from propertybot.agent.prompts import CRITERION_COUNT
+
     criteria = parse_criteria()
-    assert len(criteria) == 8
+    assert len(criteria) == CRITERION_COUNT
     assert criteria[0]["key"] == "c1"
     assert "MRT" in criteria[0]["title"]
-    assert criteria[7]["key"] == "c8"
+    assert criteria[-1]["key"] == f"c{CRITERION_COUNT}"
     assert all(row["description"] for row in criteria)
+
+
+def test_conn_creates_agent_schema_on_fresh_db(tmp_path, monkeypatch):
+    from propertybot import db as db_module
+    from propertybot.web import app as web_app
+
+    monkeypatch.setattr(db_module, "DEFAULT_DB_PATH", tmp_path / "fresh.db")
+    overview = web_app.api_overview()
+    assert overview["scored_total"] == 0
+    assert overview["unevaluated"] == 0
+
+
+def test_backfill_local_day_uses_local_date(monkeypatch):
+    from datetime import datetime
+
+    legacy = sqlite3.connect(":memory:")
+    legacy.row_factory = sqlite3.Row
+    legacy.execute(
+        "CREATE TABLE scrape_runs (run_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "kind TEXT NOT NULL DEFAULT 'scrape', started_at TEXT NOT NULL, finished_at TEXT, "
+        "status TEXT NOT NULL DEFAULT 'running', search_url TEXT, max_results INTEGER, "
+        "max_pages INTEGER, headless INTEGER DEFAULT 0, inserted INTEGER DEFAULT 0, "
+        "updated INTEGER DEFAULT 0, price_changes INTEGER DEFAULT 0, "
+        "listings_seen INTEGER DEFAULT 0, listings_scored INTEGER DEFAULT 0, "
+        "agent_run_id INTEGER, exit_code INTEGER, log TEXT)"
+    )
+    started = "2026-09-27T16:20:12+00:00"
+    legacy.execute("INSERT INTO scrape_runs (started_at) VALUES (?)", (started,))
+    legacy.commit()
+
+    web_store.ensure_schema(legacy)
+    expected = datetime.fromisoformat(started).astimezone().date().isoformat()
+    assert web_store.get_run(legacy, 1)["local_day"] == expected
+    legacy.close()
+
+
+def test_headless_flag_fails_fast_with_xvfb_hint():
+    from propertybot.cli import main
+
+    assert main(["scrape", "--headless"]) == 1
 
 
 def test_positive_int_falls_back_and_rejects_garbage():

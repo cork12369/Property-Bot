@@ -8,11 +8,13 @@ const state = {
   offset: 0,
   total: 0,
   criteria: [],
+  outcome: '',
   eventSource: null,
   activeJob: null,
   jobLogLines: [],
   logHidden: false,
   chartMode: 'scrapes',
+  chartDays: 30,
 };
 
 /* ---------------- helpers ---------------- */
@@ -49,11 +51,24 @@ function duration(startIso, endIso) {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
+const artNo = (id) =>
+  String(id).padStart(8, '0').replace(/(\d{3})(\d{3})(\d{2}).*/, '$1.$2.$3');
+
+function activateOnKey(node, fn) {
+  node.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      fn();
+    }
+  });
+}
+
 let toastTimer = null;
 function toast(message, isError = false) {
   const node = $('#toast');
   node.textContent = message;
   node.classList.toggle('error', isError);
+  node.setAttribute('role', isError ? 'alert' : 'status');
   node.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { node.hidden = true; }, isError ? 7000 : 3500);
@@ -78,17 +93,79 @@ function post(path, body) {
   });
 }
 
+/* ---------------- overlays: focus trap + restore ---------------- */
+
+let lastFocus = null;
+
+function focusablesIn(container) {
+  return Array.from(
+    container.querySelectorAll(
+      'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter((el) => !el.disabled && el.getClientRects().length > 0);
+}
+
+function openOverlay(overlay) {
+  lastFocus = document.activeElement;
+  overlay.hidden = false;
+  const focusables = focusablesIn(overlay);
+  (focusables[0] || overlay.querySelector('.drawer-body')).focus();
+}
+
+function closeOverlay(overlay) {
+  overlay.hidden = true;
+  if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+  lastFocus = null;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (!$('#drawer').hidden) closeOverlay($('#drawer'));
+    if (!$('#scrape-modal').hidden) closeOverlay($('#scrape-modal'));
+    return;
+  }
+  if (event.key === 'Tab') {
+    const open = [$('#drawer'), $('#scrape-modal')].find((el) => !el.hidden);
+    if (!open) return;
+    const focusables = focusablesIn(open);
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+    return;
+  }
+  if (event.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+    event.preventDefault();
+    $('#f-q').focus();
+  }
+});
+
 /* ---------------- tabs ---------------- */
 
-$$('.tab').forEach((tab) => {
+$$('.nav-link').forEach((tab) => {
   tab.addEventListener('click', () => {
-    $$('.tab').forEach((other) => other.classList.toggle('is-active', other === tab));
+    $$('.nav-link').forEach((other) => {
+      const active = other === tab;
+      other.classList.toggle('is-active', active);
+      other.setAttribute('aria-selected', String(active));
+    });
     $$('.tab-panel').forEach((panel) => {
       panel.classList.toggle('is-active', panel.id === `tab-${tab.dataset.tab}`);
     });
     if (tab.dataset.tab === 'runs') loadRuns();
   });
 });
+
+function showTab(name) {
+  const tab = $$('.nav-link').find((t) => t.dataset.tab === name);
+  if (tab) tab.click();
+}
 
 /* ---------------- dashboard ---------------- */
 
@@ -117,7 +194,7 @@ async function loadOverview() {
   ];
   $('#stats').innerHTML = tiles
     .map(
-      (t) => `<div class="stat">
+      (t) => `<div class="tick-item">
         <div class="label">${esc(t.label)}</div>
         <div class="value">${esc(t.value)}</div>
         ${t.sub ? `<div class="sub">${esc(t.sub)}</div>` : ''}
@@ -138,13 +215,90 @@ async function loadOverview() {
         )
         .join('')
     : '<p class="meta">No listings yet — run a scrape to get started.</p>';
+
+  loadOutcomeSpread();
+}
+
+async function loadOutcomeSpread() {
+  let facets;
+  try {
+    facets = (await api('/api/properties?limit=1')).facets;
+  } catch (_) {
+    return;
+  }
+  const counts = (facets && facets.outcomes) || {};
+  const order = ['GREAT', 'GOOD', 'OK', 'FAIL', 'unscored'];
+  const total = order.reduce((sum, key) => sum + (counts[key] || 0), 0);
+  const box = $('#outcome-spread');
+  if (!total) {
+    box.innerHTML = '<p class="meta">Nothing scored yet — run an evaluation to see the spread.</p>';
+    return;
+  }
+  const bar = order
+    .filter((key) => counts[key])
+    .map(
+      (key) =>
+        `<span class="seg-fill sp-${key}" style="width:${((counts[key] / total) * 100).toFixed(1)}%" title="${key}: ${counts[key]}"></span>`
+    )
+    .join('');
+  const legend = order
+    .filter((key) => counts[key])
+    .map(
+      (key) =>
+        `<span><i class="dot" style="background:${key === 'unscored' ? 'var(--surface-3)' : `var(--${key.toLowerCase()})`}"></i>${key === 'unscored' ? 'Unscored' : key} <span class="count">${counts[key]}</span></span>`
+    )
+    .join('');
+  box.innerHTML = `<div class="spread-bar" role="img" aria-label="Outcome spread: ${legend ? order.filter((k) => counts[k]).map((k) => `${k} ${counts[k]}`).join(', ') : ''}">${bar}</div>
+    <div class="spread-legend">${legend}</div>`;
+}
+
+async function loadTopPicks() {
+  const box = $('#top-picks');
+  let data;
+  try {
+    data = await api('/api/properties?sort=score_desc&limit=5');
+  } catch (error) {
+    box.innerHTML = `<div class="empty">Could not load top picks: ${esc(error.message)}</div>`;
+    return;
+  }
+  const scored = data.properties.filter((p) => p.score !== null && p.score !== undefined);
+  if (!scored.length) {
+    box.innerHTML = `<div class="empty"><strong>No scored listings yet</strong>
+      Run an evaluation and the best co-living candidates land here.</div>`;
+    return;
+  }
+  box.innerHTML = scored
+    .map((p, index) => {
+      const thumb = p.image_url
+        ? `<span class="pick-thumb" style="background-image:url('${esc(p.image_url)}')" aria-hidden="true"></span>`
+        : '<span class="pick-thumb" aria-hidden="true">&#127968;</span>';
+      return `<div class="pick-row" role="button" tabindex="0" data-id="${p.listing_id}"
+          aria-label="${esc(p.title || 'Untitled')}, score ${Number(p.score).toFixed(2)}, ${esc(p.outcome || '')}">
+        <span class="pick-rank">${index + 1}</span>
+        ${thumb}
+        <span class="pick-main">
+          <span class="pick-title">${esc(p.title || 'Untitled')}</span>
+          <span class="pick-addr">${esc(p.district || p.address || '')}</span>
+        </span>
+        <span class="pick-score">
+          <span class="score-num ${esc(p.outcome || 'none')}" style="font-size:17px">${Number(p.score).toFixed(2)}</span>
+          <span class="pill ${esc(p.outcome || 'none')}">${esc(p.outcome || '')}</span>
+        </span>
+        <span class="price-tag">${esc(money(p.price_value) || p.price || 'n/a')}</span>
+      </div>`;
+    })
+    .join('');
+  $$('#top-picks .pick-row').forEach((row) => {
+    const open = () => openProperty(Number(row.dataset.id));
+    row.addEventListener('click', open);
+    activateOnKey(row, open);
+  });
 }
 
 async function loadChart() {
-  const days = Number($('#days-range').value);
   let data;
   try {
-    data = await api(`/api/days?days=${days}`);
+    data = await api(`/api/days?days=${state.chartDays}`);
   } catch (error) {
     $('#chart').innerHTML = `<div class="empty">Could not load activity: ${esc(error.message)}</div>`;
     return;
@@ -161,19 +315,16 @@ async function loadChart() {
         const height = (count / max) * 100;
         parts.push(`<div class="bar ${cls}" style="height:${height}%" title="${count}"></div>`);
       };
-      const byMode = state.chartMode === 'scrapes' ? row.scrapes : row.agent_runs;
       if (state.chartMode === 'scrapes') {
         build(row.failed, 'fail');
-        build(row.scrapes - row.failed, 'eval');
+        build(row.scrapes - row.failed, 'scrape');
       } else {
-        build(byMode, 'eval');
+        build(row.agent_runs, 'eval');
       }
       const date = new Date(row.day + 'T00:00:00');
-      const label = showTicks
+      const label = showTicks || index % Math.ceil(rows.length / 8) === 0
         ? date.toLocaleDateString(undefined, { day: '2-digit', month: 'short' })
-        : index % Math.ceil(rows.length / 8) === 0
-          ? date.toLocaleDateString(undefined, { day: '2-digit', month: 'short' })
-          : '';
+        : '';
       const value = state.chartMode === 'scrapes' ? row.scrapes : row.agent_runs;
       return `<div class="bar-col ${value ? 'has-value' : ''}" title="${row.day}: ${row.scrapes} scrape(s), ${row.agent_runs} evaluation(s), ${row.inserted} new listings">
         <span class="tick">${value || ''}</span>
@@ -184,7 +335,18 @@ async function loadChart() {
     .join('');
 }
 
-$('#days-range').addEventListener('change', loadChart);
+$('#chart-range').addEventListener('click', (event) => {
+  const chip = event.target.closest('.chip');
+  if (!chip) return;
+  state.chartDays = Number(chip.dataset.days);
+  $$('#chart-range .chip').forEach((other) => {
+    const active = other === chip;
+    other.classList.toggle('is-active', active);
+    other.setAttribute('aria-pressed', String(active));
+  });
+  loadChart();
+});
+
 $('#btn-chart-mode').addEventListener('click', (event) => {
   state.chartMode = state.chartMode === 'scrapes' ? 'agent' : 'scrapes';
   event.target.textContent = state.chartMode === 'scrapes' ? 'Scrapes' : 'Evaluations';
@@ -197,26 +359,63 @@ const filters = {
   q: () => $('#f-q').value.trim(),
   district: () => $('#f-district').value,
   property_type: () => $('#f-type').value,
-  outcome: () => $('#f-outcome').value,
   min_price: () => $('#f-min').value,
   max_price: () => $('#f-max').value,
   sort: () => $('#f-sort').value,
 };
 
+const OUTCOME_CHIPS = [
+  ['', 'All'],
+  ['GREAT', 'GREAT'],
+  ['GOOD', 'GOOD'],
+  ['OK', 'OK'],
+  ['FAIL', 'FAIL'],
+  ['unscored', 'Unscored'],
+];
+
+function renderOutcomeChips(counts = {}) {
+  const rail = $('#outcome-chips');
+  const totalCount = Object.values(counts).reduce((a, b) => a + b, 0);
+  rail.innerHTML = OUTCOME_CHIPS.map(([value, label]) => {
+    const count = value === '' ? totalCount : counts[value] || 0;
+    const active = state.outcome === value;
+    return `<button class="chip ${active ? 'is-active' : ''}" data-outcome="${value}" aria-pressed="${active}">
+      ${label}<span class="chip-count">${count}</span>
+    </button>`;
+  }).join('');
+}
+
+$('#outcome-chips').addEventListener('click', (event) => {
+  const chip = event.target.closest('.chip');
+  if (!chip) return;
+  state.outcome = chip.dataset.outcome;
+  state.offset = 0;
+  loadProperties();
+});
+
 let filterTimer = null;
-['#f-q', '#f-min', '#f-max'].forEach((sel) => {
+$('#f-q').addEventListener('input', () => {
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => {
+    state.offset = 0;
+    if ($('#f-q').value.trim()) showTab('properties');
+    loadProperties();
+  }, 350);
+});
+['#f-min', '#f-max'].forEach((sel) => {
   $(sel).addEventListener('input', () => {
     clearTimeout(filterTimer);
     filterTimer = setTimeout(() => { state.offset = 0; loadProperties(); }, 350);
   });
 });
-['#f-district', '#f-type', '#f-outcome', '#f-sort'].forEach((sel) => {
+['#f-district', '#f-type', '#f-sort'].forEach((sel) => {
   $(sel).addEventListener('change', () => { state.offset = 0; loadProperties(); });
 });
 $('#btn-reset').addEventListener('click', () => {
-  ['#f-q', '#f-district', '#f-type', '#f-outcome', '#f-min', '#f-max', '#f-sort'].forEach((sel) => {
+  ['#f-q', '#f-district', '#f-type', '#f-min', '#f-max', '#f-sort'].forEach((sel) => {
     $(sel).value = sel === '#f-sort' ? 'newest' : '';
   });
+  state.outcome = '';
   state.offset = 0;
   loadProperties();
 });
@@ -231,41 +430,62 @@ $('#btn-next').addEventListener('click', () => {
   }
 });
 
+function critBarsHtml(p) {
+  const keys = state.criteria.length
+    ? state.criteria.map((c) => ({ key: c.key, index: c.index, title: c.title, description: c.description }))
+    : [1, 2, 3, 4].map((i) => ({ key: `c${i}`, index: i, title: `Criterion ${i}`, description: '' }));
+  return `<div class="card-crits">${keys
+    .map((criterion) => {
+      const value = p[criterion.key] || 0;
+      const segs = [1, 2, 3, 4]
+        .map((i) => `<i class="seg ${i <= value ? `on${value}` : ''}"></i>`)
+        .join('');
+      return `<div class="crit-mini" title="${esc(criterion.title)}${criterion.description ? ': ' + esc(criterion.description) : ''}">
+        <span class="crit-label">${esc(criterion.title)}</span>
+        <span class="segbar4" aria-label="${esc(criterion.title)}: ${value || 'no'} of 4">${segs}</span>
+      </div>`;
+    })
+    .join('')}</div>`;
+}
+
 function cardHtml(p) {
-  const image = p.image_url
-    ? `<div class="card-img" style="background-image:url('${esc(p.image_url)}')">
-         <span class="badge ${p.outcome || 'none'}">${p.outcome ? esc(p.outcome) : 'UNSCORED'}</span>
+  const thumb = p.image_url
+    ? `<span class="card-thumb" style="background-image:url('${esc(p.image_url)}')" aria-hidden="true"></span>`
+    : '<span class="card-thumb" aria-hidden="true">&#127968;</span>';
+
+  const scored = p.score !== null && p.score !== undefined;
+  const scoreBlock = scored
+    ? `<div class="card-score-row">
+         <span class="score-num ${esc(p.outcome || 'none')}">${Number(p.score).toFixed(2)}</span>
+         <span class="score-of">/ 4</span>
+         <span class="pill ${esc(p.outcome || 'none')}">${esc(p.outcome || '')}</span>
        </div>`
-    : `<div class="card-img placeholder"><span class="badge ${p.outcome || 'none'}">${p.outcome ? esc(p.outcome) : 'UNSCORED'}</span>&#127968;</div>`;
+    : `<div class="card-score-row">
+         <span class="score-num none">—</span>
+         <span class="pill none">Not evaluated</span>
+       </div>`;
 
-  const facts = [];
-  if (p.bedrooms !== null && p.bedrooms !== undefined) facts.push(`${p.bedrooms} bed`);
-  if (p.bathrooms !== null && p.bathrooms !== undefined) facts.push(`${p.bathrooms} bath`);
-  if (p.size_sqft) facts.push(`${p.size_sqft.toLocaleString()} sqft`);
-  if (p.property_type) facts.push(esc(p.property_type));
-  if (p.mrt) facts.push(esc(String(p.mrt).slice(0, 22)));
+  const delta = p.first_price && p.price_value && p.first_price !== p.price_value
+    ? `<span class="delta ${p.price_value > p.first_price ? 'up' : 'down'}"
+         title="vs first seen price">${p.price_value > p.first_price ? '▲' : '▼'} ${Math.abs(((p.price_value - p.first_price) / p.first_price) * 100).toFixed(1)}%</span>`
+    : '';
 
-  const scoreBar = p.score !== null && p.score !== undefined
-    ? `<div class="card-score">
-         <span class="total">${Number(p.score).toFixed(2)}</span>
-         <span class="segbar">${[1, 2, 3, 4, 5, 6, 7, 8]
-           .map((i) => `<i class="seg s${p[`c${i}`] !== undefined ? p[`c${i}`] : 0}"></i>`)
-           .join('')}</span>
-       </div>`
-    : '<div class="card-score"><span class="meta">Not yet evaluated</span></div>';
-
-  return `<article class="card" data-id="${p.listing_id}">
-    ${image}
-    <div class="card-body">
-      <div>
-        <div class="card-price">${esc(money(p.price_value) || p.price || 'Price n/a')}
-          <span class="card-psf">${esc(p.price_per_area || '')}</span>
-        </div>
+  return `<article class="card" data-id="${p.listing_id}" role="button" tabindex="0"
+      aria-label="${esc(p.title || 'Untitled')}${scored ? `, score ${Number(p.score).toFixed(2)} of 4, ${esc(p.outcome)}` : ', not evaluated'}">
+    <div class="card-top">
+      ${thumb}
+      <div class="card-head">
         <div class="card-title">${esc(p.title || 'Untitled')}</div>
         <div class="card-addr">${esc(p.address || p.district || 'Address n/a')}</div>
       </div>
-      <div class="facts">${facts.map((f) => `<span class="fact">${f}</span>`).join('')}</div>
-      ${scoreBar}
+    </div>
+    ${scoreBlock}
+    ${scored ? critBarsHtml(p) : ''}
+    <div class="card-foot">
+      <span class="price-tag">${esc(money(p.price_value) || p.price || 'Price n/a')}</span>
+      ${p.price_per_area ? `<span class="card-psf">${esc(p.price_per_area)}</span>` : ''}
+      ${delta}
+      <span class="art-no">${artNo(p.listing_id)}</span>
     </div>
   </article>`;
 }
@@ -276,6 +496,7 @@ async function loadProperties() {
     const value = getter();
     if (value !== '') query.set(key, value);
   });
+  if (state.outcome) query.set('outcome', state.outcome);
 
   $('#props').innerHTML = '<div class="empty">Loading properties…</div>';
   let data;
@@ -296,13 +517,16 @@ async function loadProperties() {
 
   $('#props').innerHTML = data.properties.length
     ? data.properties.map(cardHtml).join('')
-    : '<div class="empty">No properties match these filters.</div>';
+    : '<div class="empty"><strong>No properties match</strong>Loosen the filters or run a fresh scrape.</div>';
 
   $$('#props .card').forEach((card) => {
-    card.addEventListener('click', () => openProperty(Number(card.dataset.id)));
+    const open = () => openProperty(Number(card.dataset.id));
+    card.addEventListener('click', open);
+    activateOnKey(card, open);
   });
 
   syncFacets(data.facets);
+  renderOutcomeChips((data.facets && data.facets.outcomes) || {});
 }
 
 function syncFacets(facets) {
@@ -325,13 +549,33 @@ function syncFacets(facets) {
   fill('#f-type', facets.property_types || [], $('#f-type').value);
 }
 
-/* ---------------- property drawer ---------------- */
+/* ---------------- property detail ---------------- */
+
+function priceChartSvg(history) {
+  const pts = (history || []).filter((row) => row.price_value != null);
+  if (pts.length < 2) return null;
+  const w = 600, h = 130, pad = 10;
+  const values = pts.map((p) => p.price_value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const stepX = (w - pad * 2) / (pts.length - 1);
+  const coords = pts.map(
+    (p, i) =>
+      `${(pad + i * stepX).toFixed(1)},${(h - pad - ((p.price_value - min) / span) * (h - pad * 2)).toFixed(1)}`
+  );
+  const [lastX, lastY] = coords[coords.length - 1].split(',');
+  return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Asking price over ${pts.length} observations, ${money(min)} to ${money(max)}">
+    <polyline points="${coords.join(' ')}" fill="none" stroke="var(--blue-hi)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${lastX}" cy="${lastY}" r="4.5" fill="var(--yellow)"/>
+  </svg>`;
+}
 
 async function openProperty(listingId) {
   const drawer = $('#drawer');
   const content = $('#drawer-content');
   content.innerHTML = '<p class="meta">Loading…</p>';
-  drawer.hidden = false;
+  openOverlay(drawer);
 
   let data;
   try {
@@ -369,20 +613,39 @@ async function openProperty(listingId) {
     ? `<div class="drawer-hero" style="background-image:url('${esc(images[0])}')"></div>`
     : '<div class="drawer-hero placeholder">&#127968;</div>';
 
-  let html = hero;
+  let main = hero;
   if (images.length > 1) {
-    html += `<div class="gallery">${images
+    main += `<div class="gallery">${images
       .map((src) => `<img src="${esc(src)}" alt="" loading="lazy">`)
       .join('')}</div>`;
   }
 
-  html += `<h2>${esc(l.title || 'Untitled')}</h2>
-    <div class="meta">${esc(l.address || 'Address n/a')}</div>
+  main += `<h2 id="drawer-title">${esc(l.title || 'Untitled')}</h2>
+    <div class="addr-lg">${esc(l.address || 'Address n/a')}</div>
     <div class="price-lg">${esc(money(l.price_value) || l.price || 'Price n/a')}
-      ${l.price_per_area ? `<span class="card-psf">${esc(l.price_per_area)}</span>` : ''}</div>
-    <a href="${esc(l.url)}" target="_blank" rel="noopener">Open on PropertyGuru &rarr;</a>`;
+      ${l.price_per_area ? `<span class="card-psf">${esc(l.price_per_area)}</span>` : ''}</div>`;
 
-  html += '<h3>Details</h3><dl class="kv">' +
+  if (data.price_history.length) {
+    const chart = priceChartSvg(data.price_history);
+    main += '<h3>Price history</h3>';
+    if (chart) {
+      main += `<div class="price-chart">${chart}</div>`;
+    } else {
+      main += '<p class="chart-note">One observation so far — the trend line appears after a price change is scraped.</p>';
+    }
+    if (data.price_history.length > 1) {
+      main += `<table class="data">
+        <tr><th>Seen</th><th>Price</th></tr>
+        ${data.price_history
+          .map(
+            (row) => `<tr><td>${esc(shortTime(row.seen_at))}</td><td>${esc(money(row.price_value))}</td></tr>`
+          )
+          .join('')}
+      </table>`;
+    }
+  }
+
+  main += '<h3>Details</h3><dl class="kv">' +
     rows
       .filter(([, value]) => value !== null && value !== undefined && value !== '')
       .map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`)
@@ -390,25 +653,19 @@ async function openProperty(listingId) {
     '</dl>';
 
   if (l.description) {
-    html += `<h3>Description</h3><div class="desc">${esc(l.description)}</div>`;
+    main += `<h3>Description</h3><div class="desc">${esc(l.description)}</div>`;
   }
 
-  if (data.price_history.length > 1) {
-    html += `<h3>Price history</h3><table class="data">
-      <tr><th>Seen</th><th>Price</th></tr>
-      ${data.price_history
-        .map(
-          (row) => `<tr><td>${esc(shortTime(row.seen_at))}</td><td>${esc(money(row.price_value))}</td></tr>`
-        )
-        .join('')}
-    </table>`;
-  }
-
+  let ticket = '';
   if (score) {
     const evidence = (score.evidence && score.evidence.criteria) || {};
-    html += `<h3>Evaluation &mdash; ${Number(score.total).toFixed(2)} (${esc(score.outcome)})</h3>`;
-    if (score.summary) html += `<div class="desc">${esc(score.summary)}</div>`;
-    html += '<div style="margin-top:10px">' +
+    ticket += `<div class="ticket-score">
+        <span class="score-num ${esc(score.outcome || 'none')}">${Number(score.total).toFixed(2)}</span>
+        <span class="score-of">/ 4</span>
+        <span class="pill ${esc(score.outcome || 'none')}">${esc(score.outcome || '')}</span>
+      </div>`;
+    if (score.summary) ticket += `<p class="ticket-summary">${esc(score.summary)}</p>`;
+    ticket += '<h3>Criteria</h3>' +
       state.criteria
         .map((criterion) => {
           const entry = evidence[criterion.key] || {};
@@ -422,11 +679,10 @@ async function openProperty(listingId) {
             ${entry.evidence ? `<div class="crit-ev">${esc(entry.evidence)}</div>` : ''}
           </div>`;
         })
-        .join('') +
-      '</div>';
+        .join('');
 
     if (data.scores.length > 1) {
-      html += `<h3>Previous evaluations</h3><table class="data">
+      ticket += `<h3>Previous evaluations</h3><table class="data">
         <tr><th>Run</th><th>Score</th><th>Outcome</th><th>When</th></tr>
         ${data.scores
           .slice(1)
@@ -438,22 +694,18 @@ async function openProperty(listingId) {
       </table>`;
     }
   } else {
-    html += `<h3>Evaluation</h3><p class="meta">Not evaluated yet. Use
-      <strong>Run evaluation</strong> to score this property with the LLM agent.</p>`;
+    ticket += `<div class="ticket-score"><span class="score-num none">—</span>
+      <span class="pill none">Not evaluated</span></div>
+      <p class="ticket-summary">Run an evaluation to score this property with the LLM agent.</p>`;
   }
+  ticket += `<a class="btn btn-blue btn-block" href="${esc(l.url)}" target="_blank" rel="noopener">Open on PropertyGuru</a>`;
 
-  content.innerHTML = html;
+  content.innerHTML = `<div class="drawer-grid"><div class="drawer-main">${main}</div><aside class="ticket">${ticket}</aside></div>`;
   drawer.querySelector('.drawer-body').scrollTop = 0;
 }
 
 $('#drawer').addEventListener('click', (event) => {
-  if (event.target.closest('[data-close]')) $('#drawer').hidden = true;
-});
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') {
-    $('#drawer').hidden = true;
-    $('#scrape-modal').hidden = true;
-  }
+  if (event.target.closest('[data-close]')) closeOverlay($('#drawer'));
 });
 
 /* ---------------- runs ---------------- */
@@ -465,30 +717,21 @@ async function loadRuns() {
   ]);
 
   const today = new Date().toISOString().slice(0, 10);
-  const active = daysData.days.filter((d) => d.scrapes || d.agent_runs).slice().reverse();
-  $('#days').innerHTML = active.length
-    ? active
+  $('#days').innerHTML = daysData.days.length
+    ? daysData.days
         .map((day) => {
-          const failed = day.failed > 0;
           const total = day.scrapes + day.agent_runs;
-          return `<div class="day-card ${day.day === today ? 'today' : ''}">
-            <div class="day-date">
-              <span>${esc(day.day)}</span>
-              <span class="pill ${failed ? 'failed' : 'done'}">${failed ? `${day.failed} failed` : 'ok'}</span>
-            </div>
-            <div class="day-stat"><span>Scrapes</span><span>${day.scrapes}</span></div>
-            <div class="day-stat"><span>Evaluations</span><span>${day.agent_runs}</span></div>
-            <div class="day-stat"><span>New properties</span><span>${day.inserted}</span></div>
-            <div class="day-stat"><span>Price changes</span><span>${day.price_changes}</span></div>
-          </div>`;
+          const level = day.failed > 0 ? 'failed' : total === 0 ? '' : `h${Math.min(4, total)}`;
+          return `<span class="heat ${level} ${day.day === today ? 'today' : ''}"
+            title="${day.day}: ${day.scrapes} scrape(s), ${day.agent_runs} evaluation(s)${day.failed ? `, ${day.failed} failed` : ''}"></span>`;
         })
         .join('')
-    : '<div class="empty">No runs recorded yet.</div>';
+    : '<div class="empty"><strong>No runs recorded yet</strong>Start a scrape and the last 30 days fill in here.</div>';
 
   const runs = runsData.runs;
   $('#runs').innerHTML = runs.length
     ? runs.map(runHtml).join('')
-    : '<div class="empty">No runs recorded yet.</div>';
+    : '<div class="empty"><strong>No runs recorded yet</strong>Start a scrape to create the first run.</div>';
 }
 
 function runHtml(run) {
@@ -504,10 +747,10 @@ function runHtml(run) {
       ? `<a href="/api/runs/${run.agent_run_id}/report" target="_blank">View report &rarr;</a>`
       : '';
 
-  return `<div class="run">
+  return `<div class="run ${run.kind === 'agent' ? 'run-agent' : ''}">
     <div class="run-top">
       <span class="run-kind ${run.kind}">${esc(run.kind)}</span>
-      <span class="pill ${run.status}">${esc(run.status)}</span>
+      <span class="pill ${esc(run.status)}">${esc(run.status)}</span>
       <strong>Run #${run.run_id}</strong>
       <span class="meta">${esc(shortTime(run.started_at))}${elapsed ? ' · ' + elapsed : ''}</span>
       <span class="grow"></span>
@@ -588,13 +831,14 @@ function refreshAfterJob() {
   loadOverview();
   loadChart();
   loadProperties();
-  const runsTab = $$('.tab').find((t) => t.dataset.tab === 'runs');
+  loadTopPicks();
+  const runsTab = $$('.nav-link').find((t) => t.dataset.tab === 'runs');
   if (runsTab && runsTab.classList.contains('is-active')) loadRuns();
 }
 
-$('#btn-scrape').addEventListener('click', () => { $('#scrape-modal').hidden = false; });
+$('#btn-scrape').addEventListener('click', () => openOverlay($('#scrape-modal')));
 $('#scrape-modal').addEventListener('click', (event) => {
-  if (event.target.closest('[data-cancel-scrape]')) $('#scrape-modal').hidden = true;
+  if (event.target.closest('[data-cancel-scrape]')) closeOverlay($('#scrape-modal'));
 });
 
 $('#scrape-form').addEventListener('submit', async (event) => {
@@ -608,7 +852,7 @@ $('#scrape-form').addEventListener('submit', async (event) => {
   };
   try {
     const result = await post('/api/scrape', body);
-    $('#scrape-modal').hidden = true;
+    closeOverlay($('#scrape-modal'));
     attachJob(result.job);
     loadRuns();
   } catch (error) {
@@ -650,17 +894,18 @@ async function init() {
     state.criteria = criteriaData.criteria;
   } catch (_) { /* card tooltips degrade gracefully */ }
 
-  await Promise.all([loadOverview(), loadChart(), loadProperties()]);
+  renderOutcomeChips();
+  await Promise.all([loadOverview(), loadChart(), loadProperties(), loadTopPicks()]);
 
   try {
     const data = await api('/api/jobs/active');
     if (data.job) attachJob(data.job);
   } catch (_) { /* server restarted */ }
 
-  const url = new URLSearchParams().get('url');
+  const url = new URLSearchParams(location.search).get('url');
   if (url) {
     $('#s-url').value = url;
-    $('#scrape-modal').hidden = false;
+    openOverlay($('#scrape-modal'));
   }
 }
 

@@ -71,13 +71,26 @@ def chat_json(
                     "OpenRouter returned 401 — OPENROUTER_API_KEY is invalid."
                 ) from error
             if error.code == 404:
-                raise OpenRouterError(
-                    f"OpenRouter returned 404 — model '{model}' not found. "
-                    f"Check OPENROUTER_MODEL. Detail: {detail}"
-                ) from error
-            last_error = OpenRouterError(
-                f"OpenRouter HTTP {error.code}: {detail}"
-            )
+                lowered = detail.lower()
+                if "guardrail restrictions" in lowered or "training violation" in lowered:
+                    raise OpenRouterError(
+                        f"OpenRouter blocked model '{model}' by your account privacy "
+                        "settings (data policy / paid-model training). Allow it at "
+                        "https://openrouter.ai/settings/privacy or choose a model "
+                        f"without a training requirement. Detail: {detail}"
+                    ) from error
+                if "provider_name" not in detail and "provider_error_code" not in detail:
+                    raise OpenRouterError(
+                        f"OpenRouter returned 404 — model '{model}' not found. "
+                        f"Check OPENROUTER_MODEL. Detail: {detail}"
+                    ) from error
+                last_error = OpenRouterError(
+                    f"OpenRouter transient provider 404: {detail}"
+                )
+            else:
+                last_error = OpenRouterError(
+                    f"OpenRouter HTTP {error.code}: {detail}"
+                )
         except (KeyError, IndexError, json.JSONDecodeError, ValueError) as error:
             last_error = OpenRouterError(
                 f"OpenRouter reply was not valid JSON: {error}"

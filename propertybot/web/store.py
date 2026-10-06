@@ -62,10 +62,14 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
     if "local_day" in columns:
         return
     conn.execute("ALTER TABLE scrape_runs ADD COLUMN local_day TEXT")
-    conn.execute(
-        "UPDATE scrape_runs SET local_day = substr(started_at, 1, 10) "
-        "WHERE local_day IS NULL"
-    )
+    for row in conn.execute("SELECT run_id, started_at FROM scrape_runs").fetchall():
+        started = datetime.fromisoformat(row["started_at"])
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        conn.execute(
+            "UPDATE scrape_runs SET local_day = ? WHERE run_id = ?",
+            (started.astimezone().date().isoformat(), row["run_id"]),
+        )
 
 
 def create_run(

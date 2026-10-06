@@ -10,6 +10,8 @@ from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 
+from .prompts import CRITERION_KEYS, CRITERION_COUNT
+
 
 def format_pick_card(pick: dict, rank: int) -> str:
     return (
@@ -28,7 +30,7 @@ def build_digest(picks: list[dict], run_id: int, model: str) -> tuple[str, str]:
         subject,
         f"Model: {model}",
         "",
-        "Top properties by co-living score (total/8):",
+        f"Top properties by co-living score (average of {CRITERION_COUNT} criteria, 1-4):",
         "",
     ]
     for rank, pick in enumerate(picks, start=1):
@@ -50,7 +52,7 @@ def build_report_md(
         f"Scored {scored}/{seen} listings in this run.",
         "",
         "GUI contract: scores live in `propertybot.db → property_scores` "
-        "(columns: listing_id, run_id, c1..c8, total, outcome, summary, "
+        "(columns: listing_id, run_id, c1..c4 (c5..c8 unused), total, outcome, summary, "
         "evidence_json, scored_at); runs in `agent_runs`.",
         "",
         "## Top picks",
@@ -69,9 +71,7 @@ def build_report_md(
         lines.append("")
         lines.append(str(pick.get("summary") or ""))
         lines.append("")
-        breakdown = ", ".join(
-            f"c{i}={pick.get(f'c{i}')}" for i in range(1, 9)
-        )
+        breakdown = ", ".join(f"{key}={pick.get(key)}" for key in CRITERION_KEYS)
         lines.append(f"Score breakdown: {breakdown}")
         lines.append("")
     return "\n".join(lines)

@@ -26,6 +26,7 @@ def run_pipeline(
     conn = db_module.connect(config.db_path)
     try:
         store_module.ensure_schema(conn)
+        store_module.mark_stale_running_failed(conn)
         started_at = utc_now_iso()
         run_id = store_module.create_run(conn, config.openrouter_model, started_at)
         listings = store_module.fetch_unscored(conn, limit=limit)

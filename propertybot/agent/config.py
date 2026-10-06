@@ -40,7 +40,7 @@ def _get_int(name: str, default: int) -> int:
 @dataclass
 class AgentConfig:
     openrouter_api_key: str = ""
-    openrouter_model: str = "meta/muse-spark-1.3-contributor"
+    openrouter_model: str = "meta/muse-spark-1.3"
     top_n: int = 5
     db_path: Path = field(default_factory=lambda: Path("data/propertybot.db"))
     mall_db_path: Path = field(
@@ -63,7 +63,7 @@ class AgentConfig:
         return cls(
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
             openrouter_model=os.environ.get(
-                "OPENROUTER_MODEL", "meta/muse-spark-1.3-contributor"
+                "OPENROUTER_MODEL", "meta/muse-spark-1.3"
             ),
             top_n=_get_int("AGENT_TOP_N", 5),
             db_path=db_path,

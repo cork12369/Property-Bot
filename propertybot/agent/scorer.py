@@ -5,9 +5,7 @@ from __future__ import annotations
 from typing import Callable
 
 from ..models import utc_now_iso
-from .prompts import CONFIDENCE_VALUES, build_user_prompt
-
-CRITERION_KEYS = tuple(f"c{i}" for i in range(1, 9))
+from .prompts import CONFIDENCE_VALUES, CRITERION_KEYS, build_user_prompt
 
 
 def derive_outcome(total: float) -> str:
@@ -21,7 +19,7 @@ def derive_outcome(total: float) -> str:
 
 
 def validate_score(raw: dict) -> dict:
-    """Validate one LLM reply; recompute total/outcome from c1..c8."""
+    """Validate one LLM reply; recompute total/outcome from the rubric criteria."""
     if not isinstance(raw, dict):
         raise ValueError("LLM reply is not a JSON object.")
     criteria: dict[str, dict] = {}
@@ -43,7 +41,7 @@ def validate_score(raw: dict) -> dict:
             "evidence": str(entry.get("evidence") or ""),
             "confidence": confidence,
         }
-    total = round(sum(criteria[k]["score"] for k in CRITERION_KEYS) / 8, 3)
+    total = round(sum(criteria[k]["score"] for k in CRITERION_KEYS) / len(CRITERION_KEYS), 3)
     missing = raw.get("missing_data") or []
     if not isinstance(missing, list):
         missing = [str(missing)]

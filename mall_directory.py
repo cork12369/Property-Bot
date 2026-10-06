@@ -79,8 +79,9 @@ def save_db(db_path: Path, tables: dict[str, list[dict]]) -> None:
             conn.execute(f"CREATE TABLE IF NOT EXISTS {table_name} ({definitions})")
             conn.execute(f"DELETE FROM {table_name}")
             placeholders = ", ".join("?" * len(columns))
+            quoted_columns = ", ".join('"' + col + '"' for col in columns)
             conn.executemany(
-                f"INSERT INTO {table_name} ({', '.join(f'\"{c}\"' for c in columns)}) "
+                f"INSERT INTO {table_name} ({quoted_columns}) "
                 f"VALUES ({placeholders})",
                 [tuple(row.get(col) for col in columns) for row in rows],
             )

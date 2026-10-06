@@ -20,7 +20,16 @@ def _force_utf8_stdout() -> None:
             stream.reconfigure(encoding="utf-8", errors="replace")
 
 
+HEADLESS_BLOCKED_MESSAGE = (
+    "Headless Chromium is blocked by PropertyGuru's Cloudflare. Run the scraper "
+    "on a machine with a display, or under a virtual one: "
+    "`xvfb-run -a python main.py scrape`."
+)
+
+
 def cmd_scrape(args: argparse.Namespace) -> int:
+    if args.headless:
+        raise RuntimeError(HEADLESS_BLOCKED_MESSAGE)
     print(f"Scraping: {args.url}")
     print(f"Limits: {args.max_results} results, {args.max_pages} pages, {args.delay}s delay")
 
@@ -134,8 +143,8 @@ def build_parser() -> argparse.ArgumentParser:
     scrape.add_argument(
         "--headless",
         action="store_true",
-        help="Run the browser without a visible window (currently detected by "
-        "Cloudflare and likely to fail — the default visible window is required)",
+        help="Not supported: Cloudflare blocks headless Chromium, so this exits "
+        "immediately. On a headless server use `xvfb-run -a python main.py scrape`",
     )
     scrape.add_argument(
         "--dry-run", action="store_true", help="Print parsed listings without saving"
