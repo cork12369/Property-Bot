@@ -433,7 +433,7 @@ $('#btn-next').addEventListener('click', () => {
 function critBarsHtml(p) {
   const keys = state.criteria.length
     ? state.criteria.map((c) => ({ key: c.key, index: c.index, title: c.title, description: c.description }))
-    : [1, 2, 3, 4].map((i) => ({ key: `c${i}`, index: i, title: `Criterion ${i}`, description: '' }));
+    : [1, 2, 3, 4, 5, 6, 7, 8].map((i) => ({ key: `c${i}`, index: i, title: `Criterion ${i}`, description: '' }));
   return `<div class="card-crits">${keys
     .map((criterion) => {
       const value = p[criterion.key] || 0;

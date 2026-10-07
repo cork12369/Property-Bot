@@ -78,7 +78,7 @@ def find_mall_candidates(
             "latitude, longitude, num_stores, num_fnb FROM malls"
         ).fetchall()
     except sqlite3.Error:
-        return [], "Malls table is unreadable; score criteria 2-3 with low confidence."
+        return [], "Malls table is unreadable; score criterion 2 at 1 with low confidence."
 
     listing_tokens = (
         _tokens(listing.get("district"))
@@ -150,7 +150,7 @@ def find_mall_candidates(
             "estimate walking times from addresses and mark confidence low."
         )
     elif not candidates:
-        note = "No mall matched the listing location; score criteria 2-3 with low confidence."
+        note = "No mall matched the listing location; score criterion 2 at 1 with low confidence."
     return candidates, note
 
 
@@ -194,7 +194,7 @@ def build_context(
     if not Path(mall_db_path).exists():
         ctx["mall_note"] = (
             f"Mall database not found at {mall_db_path}; "
-            "score criteria 2-3 from listing text only with low confidence."
+            "score criterion 2 at 1 from listing text only with low confidence."
         )
         return ctx
     mall_conn = sqlite3.connect(mall_db_path)

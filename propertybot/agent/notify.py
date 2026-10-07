@@ -52,7 +52,7 @@ def build_report_md(
         f"Scored {scored}/{seen} listings in this run.",
         "",
         "GUI contract: scores live in `propertybot.db → property_scores` "
-        "(columns: listing_id, run_id, c1..c4 (c5..c8 unused), total, outcome, summary, "
+        "(columns: listing_id, run_id, c1..c8, total, outcome, summary, "
         "evidence_json, scored_at); runs in `agent_runs`.",
         "",
         "## Top picks",

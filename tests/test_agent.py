@@ -122,21 +122,44 @@ def _scores(*values):
     )
 
 
-def test_strong_and_weak_listings_differ_by_at_least_one_point():
-    strong = scorer.validate_score(_scores(4, 4, 4, 4))
-    weak = scorer.validate_score(_scores(1, 1, 2, 2))
-    assert strong["total"] - weak["total"] >= 1.0
+def test_prompt_restores_all_eight_client_criteria():
+    from propertybot.agent.prompts import (
+        SYSTEM_PROMPT,
+        build_user_prompt,
+    )
+
+    listing = {"listing_id": 1, "title": "T", "mrt": "EW4"}
+    ctx = {
+        "mrt_minutes": 5,
+        "mrt_line_colour": "Green (East West Line)",
+        "malls": [
+            {
+                "name": "Test Mall", "address": "1 Test Rd", "nearest_mrt": "EW4",
+                "num_stores": 10, "num_fnb": 3, "has_grocery": True,
+                "has_foodcourt": True, "has_cinema": False, "has_library": True,
+                "match_reason": "token overlap",
+            }
+        ],
+        "mall_note": None,
+        "price_history": [],
+        "district_avg_price": None,
+    }
+    prompt = build_user_prompt(listing, ctx)
+    assert "Number of units" in prompt
+    assert "Availability of facilities" in prompt
+    assert "Rental demand" in prompt
+    assert "past transaction" in prompt
+    assert "Mall candidate: Test Mall" in prompt
+    assert "and score 1 (weakest)" in SYSTEM_PROMPT
+    assert "price trend" not in (prompt + SYSTEM_PROMPT).lower()
 
 
-def test_outcomes_are_not_degenerate():
-    fixtures = [
-        _scores(4, 4, 4, 4),
-        _scores(4, 3, 3, 2),
-        _scores(3, 3, 2, 2),
-        _scores(1, 1, 2, 2),
-    ]
-    outcomes = {scorer.validate_score(reply)["outcome"] for reply in fixtures}
-    assert len(outcomes) >= 2
+def test_totals_average_all_eight_criteria():
+    result = scorer.validate_score(_scores(4, 4, 4, 4, 4, 4, 4, 4))
+    assert result["total"] == 4.0
+    mixed = scorer.validate_score(_scores(4, 4, 3, 1, 1, 1, 4, 3))
+    assert mixed["total"] == round(21 / 8, 3)
+    assert mixed["outcome"] == "OK"
 
 
 def test_stale_running_agent_runs_marked_failed():

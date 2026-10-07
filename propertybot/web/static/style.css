@@ -32,6 +32,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -50,6 +51,11 @@ a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-ra
 
 .num, .ticker .value, .price-tag, .score-num, .card-price, .price-lg, .count, .tick {
   font-variant-numeric: tabular-nums;
+}
+
+.gallery, .drawer-body, .run-log, .joblog, .ticker, .site-nav {
+  scrollbar-color: var(--surface-3) transparent;
+  scrollbar-width: thin;
 }
 
 .skip-link {
@@ -151,7 +157,7 @@ main { padding: 20px 24px; max-width: 1500px; margin: 0 auto; }
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-md); margin-bottom: 18px;
 }
-.tick-item { padding: 12px 20px 14px; border-left: 1px solid var(--line-soft); flex: 1 0 auto; }
+.tick-item { padding: 12px 20px 14px; border-left: 1px solid var(--line-soft); flex: 1 1 0; min-width: 120px; }
 .tick-item:first-child { border-left: 0; }
 .tick-item .label { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .07em; white-space: nowrap; }
 .tick-item .value { font-size: 22px; font-weight: 800; margin-top: 3px; white-space: nowrap; }
@@ -189,8 +195,8 @@ main { padding: 20px 24px; max-width: 1500px; margin: 0 auto; }
   display: grid; place-items: center; color: var(--faint); font-size: 16px;
 }
 .pick-main { min-width: 0; }
-.pick-title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pick-addr { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-title { display: block; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-addr { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick-score { display: flex; align-items: center; gap: 8px; }
 .pick-score .num { font-weight: 800; font-size: 17px; }
 
@@ -267,9 +273,10 @@ main { padding: 20px 24px; max-width: 1500px; margin: 0 auto; }
 /* ---------- market cards ---------- */
 .card-grid {
   display: grid; gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
 }
 .card {
+  min-width: 0;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-md); padding: 14px; cursor: pointer;
   display: flex; flex-direction: column; gap: 12px;
@@ -495,7 +502,8 @@ table.data th { color: var(--muted); font-weight: 600; }
   .site-nav { padding: 0 14px; overflow-x: auto; }
   main { padding: 16px 14px; }
   .type-row { grid-template-columns: 108px 1fr 44px; }
-  .card-grid { grid-template-columns: 1fr; }
+  .card-grid { grid-template-columns: minmax(0, 1fr); }
+  .filters input, .filters select { min-width: 0; flex: 1 1 140px; }
   .tick-item { padding: 10px 14px 12px; }
   .pick-row { grid-template-columns: 20px 34px minmax(0, 1fr) auto; }
   .pick-row .price-tag { display: none; }

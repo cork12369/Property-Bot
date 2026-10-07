@@ -84,10 +84,7 @@ def save_score(
         (
             listing_id,
             run_id,
-            *(
-                criteria[key]["score"] if key in criteria else None
-                for key in (f"c{i}" for i in range(1, 9))
-            ),
+            *(criteria[f"c{i}"]["score"] for i in range(1, 9)),
             result["total"],
             result["outcome"],
             result["summary"],

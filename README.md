@@ -92,7 +92,7 @@ A local FastAPI dashboard that replaces clicking through the CLI:
   outcome-spread bar (GREAT/GOOD/OK/FAIL/unscored), a daily activity chart, and a
   property-type breakdown.
 - **Properties** — market-style cards (score, outcome pill, per-criterion
-  `c1`–`c4` bars, yellow price tag with change since first seen) with a global
+  `c1`–`c8` bars, yellow price tag with change since first seen) with a global
   search bar (`/`), outcome chips, and district/type/price filters. The detail
   view adds a gallery, a price-history chart, and the full evidence behind every
   evaluation criterion.
@@ -116,7 +116,10 @@ and run history read from. Host and port default to `GUI_HOST` / `GUI_PORT` in `
   `meta/muse-spark-1.3`, works on a stock OpenRouter account.
 - The `meta/muse-spark-1.3-contributor` variant requires allowing paid-model training
   at <https://openrouter.ai/settings/privacy>; otherwise OpenRouter rejects it.
-- Price-trend scoring compares *asking* prices, not transactions, and is only
+- Scores follow the client's 8-criterion co-living checklist (total = average of
+  c1..c8, `>3.5 GREAT / >3 GOOD / >2.5 OK`). Until Phases 2-3 land, criteria 4-6
+  score 1 when the data is unavailable, so totals skew low by design.
+- Price scoring compares against *asking* prices, not transactions, and is only
   meaningful once repeated scrapes have recorded real price movements.
 
 ## Data schema

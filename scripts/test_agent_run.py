@@ -23,7 +23,7 @@ CALL_COUNT = {"n": 0}
 
 def fake_chat_json(user_prompt, *, api_key, model, **kwargs):
     CALL_COUNT["n"] += 1
-    base = [4, 3, 3, 2]
+    base = [4, 3, 3, 2, 3, 3, 4, 2]
     shift = CALL_COUNT["n"] % 3
     scores = [min(4, max(1, s + (1 if (i + shift) % 3 == 0 else 0))) for i, s in enumerate(base)]
     return {
